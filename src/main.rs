@@ -42,7 +42,7 @@ mod utils;
 
 use crate::{
     cache::{Cache, CacheFreshness, PageLookupResult, TLDR_PAGES_DIR},
-    cli::Args,
+    cli::Cli,
     config::{get_config_dir, get_config_path, make_default_config, Config, PathWithSource},
     extensions::Dedup,
     output::print_page,
@@ -59,9 +59,9 @@ const ARCHIVE_URL: &str = "https://tldr.sh/assets/tldr.zip";
 
 /// The cache should be updated if it was explicitly requested,
 /// or if an automatic update is due and allowed.
-fn should_update_cache(cache: &Cache, args: &Args, config: &Config) -> bool {
-    args.update
-        || (!args.no_auto_update
+fn should_update_cache(cache: &Cache, cli: &Cli, config: &Config) -> bool {
+    cli.update
+        || (!cli.no_auto_update
             && config.updates.auto_update
             && cache
                 .last_update()
@@ -75,10 +75,10 @@ enum CheckCacheResult {
 }
 
 /// Check the cache for freshness. If it's stale or missing, show a warning.
-fn check_cache(cache: &Cache, args: &Args, enable_styles: bool) -> CheckCacheResult {
+fn check_cache(cache: &Cache, cli: &Cli, enable_styles: bool) -> CheckCacheResult {
     match cache.freshness() {
         CacheFreshness::Fresh => CheckCacheResult::CacheFound,
-        CacheFreshness::Stale(_) if args.quiet => CheckCacheResult::CacheFound,
+        CacheFreshness::Stale(_) if cli.quiet => CheckCacheResult::CacheFound,
         CacheFreshness::Stale(age) => {
             print_warning(
                 enable_styles,
@@ -240,14 +240,14 @@ fn main() {
     init_log();
 
     // Parse arguments
-    let args = Args::parse();
+    let cli = Cli::parse();
 
     // Determine the usage of styles
     #[cfg(target_os = "windows")]
     let ansi_support = yansi::Paint::enable_windows_ascii();
     #[cfg(not(target_os = "windows"))]
     let ansi_support = true;
-    let enable_styles = match args.color.unwrap_or_default() {
+    let enable_styles = match cli.color.unwrap_or_default() {
         // Attempt to use styling if instructed
         ColorOptions::Always => true,
         // Enable styling if:
@@ -271,22 +271,22 @@ fn main() {
     };
 
     // Show various paths
-    if args.show_paths {
+    if cli.show_paths {
         show_paths(&config);
     }
 
     // Create a basic config and exit
-    if args.seed_config {
+    if cli.seed_config {
         create_config_and_exit(enable_styles);
     }
 
     // Specify target OS
-    let platform: PlatformType = args.platform.unwrap_or_else(PlatformType::current);
+    let platform: PlatformType = cli.platform.unwrap_or_else(PlatformType::current);
 
     // If a local file was passed in, render it and exit
-    if let Some(file) = args.render {
+    if let Some(file) = cli.render {
         let path = PageLookupResult::with_page(file);
-        if let Err(ref e) = print_page(&path, args.raw, enable_styles, args.pager, &config) {
+        if let Err(ref e) = print_page(&path, cli.raw, enable_styles, cli.pager, &config) {
             print_error(enable_styles, e);
             process::exit(1);
         } else {
@@ -298,13 +298,13 @@ fn main() {
     let cache = Cache::new(platform, &config.directories.cache_dir.path);
 
     // Clear cache, pass through
-    if args.clear_cache {
-        clear_cache(&cache, args.quiet, enable_styles);
+    if cli.clear_cache {
+        clear_cache(&cache, cli.quiet, enable_styles);
     }
 
     // Cache update, pass through
-    let cache_updated = if should_update_cache(&cache, &args, &config) {
-        update_cache(&cache, args.quiet, enable_styles);
+    let cache_updated = if should_update_cache(&cache, &cli, &config) {
+        update_cache(&cache, cli.quiet, enable_styles);
         true
     } else {
         false
@@ -312,14 +312,14 @@ fn main() {
 
     // Check cache presence and freshness
     if !cache_updated
-        && (args.list || !args.command.is_empty())
-        && check_cache(&cache, &args, enable_styles) == CheckCacheResult::CacheMissing
+        && (cli.list || !cli.command.is_empty())
+        && check_cache(&cache, &cli, enable_styles) == CheckCacheResult::CacheMissing
     {
         process::exit(1);
     }
 
     // List cached commands and exit
-    if args.list {
+    if cli.list {
         let custom_pages_dir = config
             .directories
             .custom_pages_dir
@@ -330,14 +330,14 @@ fn main() {
     }
 
     // Show command from cache
-    if !args.command.is_empty() {
+    if !cli.command.is_empty() {
         // Note: According to the TLDR client spec, page names must be transparently
         // lowercased before lookup:
         // https://github.com/tldr-pages/tldr/blob/main/CLIENT-SPECIFICATION.md#page-names
-        let command = args.command.join("-").to_lowercase();
+        let command = cli.command.join("-").to_lowercase();
 
         // Collect languages
-        let languages = args
+        let languages = cli
             .language
             .map_or_else(get_languages_from_env, |lang| vec![lang]);
 
@@ -352,14 +352,14 @@ fn main() {
                 .map(PathWithSource::path),
         ) {
             if let Err(ref e) =
-                print_page(&lookup_result, args.raw, enable_styles, args.pager, &config)
+                print_page(&lookup_result, cli.raw, enable_styles, cli.pager, &config)
             {
                 print_error(enable_styles, e);
                 process::exit(1);
             }
             process::exit(0);
         } else {
-            if !args.quiet {
+            if !cli.quiet {
                 print_warning(
                     enable_styles,
                     &format!(
